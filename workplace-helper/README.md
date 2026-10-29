@@ -1,4 +1,4 @@
-﻿# Pepper — safety inspection and workplace guidance
+# Pepper — safety inspection and workplace guidance
 
 An orange-and-white, tablet-friendly application with simple German, large illustrated controls and spoken explanations. The UI uses plain HTML, CSS and JavaScript; Python runs the YOLO model. No frontend build step, API key or cloud AI account is required.
 
@@ -15,15 +15,31 @@ python app.py
 
 Model weights are already in `models/best.pt` on this laptop. If missing, the first inspection downloads the requested checkpoint from [killuminati1/construction-ppe-yolov8](https://huggingface.co/killuminati1/construction-ppe-yolov8). Subsequent model inference is local. Downloaded weights are not committed to Git.
 
-## Before work
+## Robot companion workflow
 
-1. **Arbeit beginnen** opens the inspection. Select a destination room. The expandable demo settings select helmet, gloves, or both.
-2. **Check starten** greets the worker, requests camera permission, then captures an image after a short positioning pause.
-3. Each selected item gets an illustrated result. A missing or uncertain item prompts another check. After the second unsuccessful inference, **Assistenz rufen** appears. Camera/service errors also expose help immediately.
-4. A pass requires exactly one detected worker, every selected positive PPE class near that person's box, and no contradictory missing-PPE label. A blank frame, two people, uncertain equipment or unassociated equipment cannot pass.
-5. A pass opens access to **Zum Arbeitsplatz**: a schematic example route from reception to the selected room. **Ich bin im Raum** opens that room's guidance.
+The employee UI is a fullscreen, sequential companion, with no dashboard columns or browsing navigation. It runs in Pepper's tablet webview; the interaction itself is designed as a robot conversation. The large **Willkommen / Welcome** target requests fullscreen on supported browsers.
 
-The result is a **demo check, not permission to work**. A bounding box does not establish correct fit, both hands being protected, task suitability or certified PPE. Requirements must come from the employer's risk assessment. In particular, do not infer that gloves are appropriate near rotating woodworking machinery. The glove example here concerns manual packaging; the woodworking task uses a hand sanding block and requires instruction.
+1. Tap **Willkommen** and choose a named demo profile. Names are chosen explicitly; there is no face recognition.
+2. Pepper asks **Bist du bereit für den Sicherheits-Check?** The camera is untouched until **Ja, jetzt prüfen** is pressed. **Noch nicht** waits quietly.
+3. One image is inspected. The camera stops after the result. If a required item is missing or uncertain, Pepper explains it once, then waits. There is no automatic repeated inspection or recurring spoken warning.
+4. **Erneut prüfen** starts the next single inspection. After a second unsuccessful result, **Assistenz rufen** is available. Technical errors also offer assistance.
+5. A pass requires exactly one detected worker, every selected positive PPE class near that person's box, and no contradictory missing-PPE label. A blank frame or uncertain result cannot pass.
+6. Pepper welcomes the employee by name, displays their example station and asks **Soll ich dir den Weg zeigen?** The map opens only after **Ja, zeig mir den Weg**.
+7. The map fills the screen with a thick orange route to the assigned station. Only route-related signs are highlighted. Tapping a sign opens a single visual explanation and German speech. Task instructions also show one step at a time.
+8. Pepper gives the next waypoint and waits for the user. **Hier angekommen** asks for confirmation before changing position. **Standort bestätigen** permits an explicit manual correction. Clicking a room or reading a sign does not change location.
+9. **Ausgang / Exit** is always available, including inside popups and before an inspection passes. It immediately shows a red example route and speaks calm instructions. It does not require an inspection or movement confirmation first.
+
+The fixed sample profiles in `navigation.py` are **Alex → Packplatz A / Werkstatt 1**, **Sam → Handarbeitsplatz H1 / Werkstatt 2**, and **Kim → Platz B1 / Betreuung**. Their check profiles exercise both PPE items, helmet only, and gloves only respectively. This is a clearly labelled demo roster, not a connection to the organization's daily shift planner. A real deployment needs an authenticated employee/shift source and approved task-specific PPE requirements.
+
+### Routing and location
+
+`navigation.py` defines a small connected graph with corridor waypoints and exact example station coordinates. Routes follow graph edges, rather than lines through unrelated rooms. Dijkstra's algorithm selects the shortest path to the assigned station or nearest configured exit by schematic walkable length. It does not calculate real metres or route safety.
+
+Only the main entrance from the supplied drawing is configured as an **example exit**. No secondary verified emergency exit or real assembly point is invented. The graph algorithm supports multiple exits, but their actual positions and suitability must be confirmed before adding them. It has no smoke, fire, obstacle or accessibility sensing. The red path is a training illustration, not an approved evacuation route.
+
+The default start is reception. The current position is the user's **last confirmed location**, not live robot or employee tracking. A Pepper camera connection does not provide localization. `GET /api/companion` supplies the demo roster and graph; `POST /api/route` computes routes from a validated node. Names stay in the browser's active session; there is no biometric recognition.
+
+The PPE result is a **demo check, not permission to work**. A bounding box does not establish correct fit, both hands being protected, task suitability or certified PPE. Requirements must come from the employer's risk assessment. In particular, do not infer that gloves are appropriate near rotating woodworking machinery. The glove example concerns manual packaging; the woodworking task uses a hand sanding block and requires instruction.
 
 ## During work: the five room guides
 
@@ -35,22 +51,23 @@ The result is a **demo check, not permission to work**. A bounding box does not 
 | Sanitary / care | Wash hands, slippery floor, first aid | Water and soap → wash thoroughly → dry hands |
 | Support / care | First aid, emergency exit, no smoking | Speak to support person → show what you need → begin together |
 
-Each symbol opens a visual explanation with short German text and automatic speech. The replay button repeats it. Voice can be disabled globally. Native browser speech uses an available German system voice, preferring a local voice; availability and offline behavior depend on the device. The AI itself is the YOLO vision model. The safety guidance is curated text, rather than generated advice.
+Map signs and room signs open a single visual explanation with short German text and automatic speech. The replay button repeats it. Voice can be disabled globally. Native browser speech uses an available German system voice, preferring a local voice; availability and offline behavior depend on the device. The AI itself is the YOLO vision model. The safety guidance is curated text, rather than generated advice.
 
-Each room also has:
+Tap a room on the map, or **Mein Arbeitsplatz**, for:
 
-- **Feuerlöscher**: a proposed position beside its exit, on the corridor side, plus a schematic marker and spoken explanation. Sanitary equipment is proposed outside the wet area. These are suggestions, not verified installed equipment.
-- **Aufgabe zeigen**: a pictorial task with 2–3 short steps and spoken narration.
-- **Fluchtweg lernen**: a clearly marked training route through the corridor and reception to the main entrance, with an outdoor arrow. The assembly point is deliberately not fabricated; it must be confirmed locally.
-- **Weg zum Raum**: an example route from reception. There is no live localization or robot movement.
+- **Wo ist der Feuerlöscher?**: a proposed position beside the exit, on the corridor side, plus a large pictogram and spoken explanation. Sanitary equipment is proposed outside the wet area. These are suggestions, not verified installed equipment.
+- **Meine Aufgabe**: a pictorial task with 2–3 short steps. Each step is shown separately and only advances when requested.
+- **Sicherheitszeichen**: the room's three example signs, each opening a single explanation.
 
-`static/content.js` holds the room content, symbol assignments and route coordinates. `static/icons.js` contains small editable SVG illustrations. These are learning illustrations, not certified ISO sign artwork. Replace them with approved facility signs before operational use.
+The persistent **Ausgang / Exit** action replaces the old room-specific escape menu. It recomputes the red example route from the last confirmed position. The orange work route remains tied to the assigned station. Reading another room's information does not silently change that assignment or location.
+
+`static/content.js` holds room content and symbol explanations. Active route geometry, profiles and sign placements are in `navigation.py`. The old route coordinate fields in content.js are retained as reference and are not used by the companion router. `static/icons.js` contains small editable SVG illustrations. These are learning illustrations, not certified ISO sign artwork. Replace them with approved facility signs before operational use.
 
 ## Help reaches a real local assistant screen
 
-Open **http://127.0.0.1:5000/assistant** in another browser window and keep it open. It polls for requests every three seconds. Workers must tap **Assistenz jetzt rufen** to send a request. The worker is told only that the local screen received it, not that somebody has seen it. When an assistant clicks **Ich kümmere mich**, the worker sees and hears confirmation. **Erledigt** resolves the request.
+Open **http://127.0.0.1:5000/assistant** in another browser window and keep it open. It polls for requests every three seconds. Workers must tap **Ja, Assistenz rufen** to send a request. The worker is told only that the local service received it, not that somebody has seen it. When an assistant clicks **Ich kümmere mich**, the worker sees and hears confirmation. **Erledigt** resolves the request.
 
-Requests contain an anonymous random ID, target room, reason, timestamp and status. They persist in `help-requests.sqlite3`; no names or photos are stored. Requests are not sent to email, SMS or external services. The assumed meeting place is Pepper at reception. The prototype assistant API has no staff authentication: keep it local or on a controlled demonstration network. A real deployment needs authentication and a retention policy for these records.
+Requests contain an anonymous random ID, target room, manually confirmed location, reason, timestamp and status. They persist in `help-requests.sqlite3`; no names or photos are stored. Requests are not sent to email, SMS or external services. The assistant screen shows the manually confirmed location. It must not be interpreted as a live location feed. The prototype assistant API has no staff authentication: keep it local or on a controlled demonstration network. A real deployment needs authentication and a retention policy for these records.
 
 ## Connect Pepper when the hardware is available
 
@@ -99,6 +116,6 @@ Camera frames are processed in memory and are not intentionally persisted. This 
 
 ## Verification
 
-Run `python -m unittest test_app -v` for conservative PPE decision rules and the persistent/idempotent help workflow. Nine checks cover empty frames, missing/contradictory gear, equipment without a person, two-person ambiguity, out-of-person equipment, positive results, malformed requests and help acknowledgement.
+Run `python -m unittest test_app -v`. Thirteen backend checks cover conservative PPE rules, help delivery and acknowledged location, exact assignment routing, connected paths, invalid/disconnected locations, and choosing an exit by graph distance rather than straight-line distance.
 
-`check_browser.py` is a development check requiring Playwright and installed Chrome. Start the app on port 5055 (`$env:PORT='5055'; python app.py`) first, then run `python check_browser.py`. It uses a fake browser camera and mocked detections to exercise retries, second-failure escalation, actual local help delivery/acknowledgement, success navigation, room popups and mobile layout. It does not validate model accuracy, physical camera placement, audible output or real Pepper hardware.
+`check_browser.py` requires Playwright and installed Chrome. Start the app on port 5055 first, then run `python check_browser.py`. It supplies a generated canvas camera stream, mocked PPE results and captured speech calls. It exercises explicit camera consent, quiet failure/no automatic retry, stopped camera tracks, named assignment, route consent, waypoint confirmation, all room guides, exit access before a pass, local assistant delivery/acknowledgement and mobile layout. Navigation and help APIs are real in this test. No test establishes physical camera quality, PPE accuracy, audible speech or Pepper compatibility.

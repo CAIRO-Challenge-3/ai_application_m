@@ -1,121 +1,167 @@
-/* Pepper UI: browser camera today; optional NAOqi bridge when robot is connected. */
-const $ = s => document.querySelector(s);
-const state = {view:'home', room:ROOMS[0], required:['helmet','gloves'], attempts:0,
-  passed:false, stream:null, busy:false, cameraActive:false, epoch:0, sound:true,
-  source:'browser', speechSource:'browser', lastSpeech:'', helpId:null, helpPoll:null,
-  captureTimer:null, frameTimer:null, controller:null, modalSpeech:'', zoom:1};
+﻿/* One question at a time. Location changes only after explicit user confirmation. */
+const $ = selector => document.querySelector(selector);
+const state = {
+  view:'welcome', config:null, source:'browser', speechSource:'browser', sound:true,
+  profile:null, current:'reception', passed:false, attempts:0, assessment:null,
+  stream:null, cameraEpoch:0, controller:null, busy:false, route:null, routeEpoch:0,
+  mode:'work', modalSpeech:'', helpPoll:null, zoom:1, prompt:''
+};
 let speechEpoch=0, speechQueue=Promise.resolve();
-function queuePepperSpeech(text){speechQueue=speechQueue.catch(()=>{}).then(()=>fetch('/api/speak',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})}));return speechQueue;}
-function hydrate(root=document) { root.querySelectorAll('[data-icon]').forEach(el=>el.innerHTML=icon(el.dataset.icon)); }
-function toast(text) { $('#toast').textContent=text; $('#toast').classList.remove('hidden'); clearTimeout(toast.timer); toast.timer=setTimeout(()=>$('#toast').classList.add('hidden'),5500); }
-function stopSpeech() { speechEpoch++; if ('speechSynthesis' in window) speechSynthesis.cancel(); if(state.speechSource==='pepper') queuePepperSpeech('').catch(()=>{}); }
-async function speak(text) {
-  state.lastSpeech=text; if(!state.sound) return; const token=++speechEpoch;
-  if ('speechSynthesis' in window) speechSynthesis.cancel();
-  if(state.speechSource==='pepper') {
-    try {const r=await queuePepperSpeech(text); if(r.ok) return; } catch(e) {}
-    if(token!==speechEpoch) return;
-    toast('Pepper spricht gerade nicht. Ich versuche die Stimme dieses Geräts.');
+const escapeHTML = value => String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const roomFor = id => ROOMS.find(r=>r.id===id)||ROOMS[0];
+const nodeName = id => state.config?.nodes[id]?.name || 'Empfang';
+const gearName = key => key==='helmet'?'Helm':'Handschuhe';
+const face = '<span class="robot-face" aria-hidden="true"><i></i><i></i></span>';
+function hydrate(root=document){root.querySelectorAll('[data-icon]').forEach(el=>el.innerHTML=icon(el.dataset.icon));}
+function toast(text){$('#toast').textContent=text;$('#toast').classList.remove('hidden');clearTimeout(toast.timer);toast.timer=setTimeout(()=>$('#toast').classList.add('hidden'),6500);}
+function queueSpeech(text,token){speechQueue=speechQueue.catch(()=>{}).then(()=>{if(token!==speechEpoch)return null;return fetch('/api/speak',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})});});return speechQueue;}
+function stopSpeech(){speechEpoch++;if('speechSynthesis' in window)speechSynthesis.cancel();if(state.speechSource==='pepper')queueSpeech('',speechEpoch).catch(()=>{});}
+async function speak(text){
+  state.prompt=text;if(!state.sound)return;const token=++speechEpoch;
+  if('speechSynthesis' in window)speechSynthesis.cancel();
+  if(state.speechSource==='pepper'){
+    try{const response=await queueSpeech(text,token);if(response?.ok)return;}catch(e){}
+    if(token!==speechEpoch)return;
+    toast('Pepper ist nicht hörbar. Ich versuche die Stimme am Bildschirm.');
   }
-  if (!('speechSynthesis' in window)) {toast('Keine Stimme verfügbar. Die Bilder und Texte bleiben sichtbar.');return;}
-  const u=new SpeechSynthesisUtterance(text);u.lang='de-DE';u.rate=.88;
-  const voices=speechSynthesis.getVoices();const voice=voices.find(v=>v.lang.toLowerCase().startsWith('de')&&v.localService)||voices.find(v=>v.lang.toLowerCase().startsWith('de'));
-  if(voice)u.voice=voice;
-  u.onerror=e=>{if(!['canceled','interrupted'].includes(e.error))toast('Die Stimme ist nicht verfügbar. Bitte prüfe die Lautstärke und die Sprach-Einstellungen.');};
-  speechSynthesis.speak(u);
+  if(!('speechSynthesis' in window)){toast('Keine Stimme verfügbar. Bilder und Text bleiben sichtbar.');return;}
+  const utterance=new SpeechSynthesisUtterance(text);utterance.lang='de-DE';utterance.rate=.84;
+  const voices=speechSynthesis.getVoices();const voice=voices.find(v=>v.lang.startsWith('de')&&v.localService)||voices.find(v=>v.lang.startsWith('de'));
+  if(voice)utterance.voice=voice;
+  utterance.onerror=event=>{if(!['canceled','interrupted'].includes(event.error))toast('Bitte prüfe Lautstärke und deutsche Stimme auf diesem Gerät.');};
+  speechSynthesis.speak(utterance);
 }
-function showView(name) {
-  if(name!=='check') stopCamera(); stopSpeech();
-  document.querySelectorAll('.view').forEach(v=>v.classList.toggle('active',v.id===name));state.view=name;window.scrollTo(0,0);
-}
-function showModal(title,body,spoken,eyebrow='PEPPER ERKLÄRT') {
+function render(html,view){state.view=view;$('#stage').innerHTML=html;hydrate($('#stage'));}
+function scene(content){return '<section class="scene">'+content+'</section>';}
+function actions(content){return '<div class="scene-actions">'+content+'</div>';}
+function button(id,text,kind='solid-button',symbol=''){return '<button id="'+id+'" class="'+kind+'">'+(symbol?icon(symbol):'')+text+'</button>';}
+function showModal(title,html,spoken,eyebrow='PEPPER ERKLÄRT'){
   clearInterval(state.helpPoll);state.helpPoll=null;state.modalSpeech=spoken;
-  $('#modalTitle').textContent=title;$('#modalEyebrow').textContent=eyebrow;$('#modalBody').innerHTML=body;
-  state.zoom=1;$('#doneModal').textContent='Verstanden';hydrate($('#modal'));
-  if(!$('#modal').open)$('#modal').showModal(); speak(spoken);
+  $('#modalTitle').textContent=title;$('#modalEyebrow').textContent=eyebrow;$('#modalBody').innerHTML=html;
+  $('#modalDone').textContent='Verstanden';$('#modalDone').onclick=closeModal;hydrate($('#modal'));
+  if(!$('#modal').open)$('#modal').showModal();speak(spoken);
 }
-function closeModal(){ $('#modal').close();stopSpeech();clearInterval(state.helpPoll);state.helpPoll=null; }
-$('#closeModal').onclick=closeModal;$('#doneModal').onclick=closeModal;
+function closeModal(){if($('#modal').open)$('#modal').close();stopSpeech();clearInterval(state.helpPoll);state.helpPoll=null;}
+$('#closeModal').onclick=closeModal;$('#modalDone').onclick=closeModal;
 $('#modal').addEventListener('cancel',()=>{stopSpeech();clearInterval(state.helpPoll);});
-$('#repeatVoice').onclick=()=>speak(state.modalSpeech);
-$('#sound').onclick=()=>{state.sound=!state.sound;$('#sound').setAttribute('aria-pressed',String(state.sound));$('#sound').lastElementChild.textContent=state.sound?'Ton an':'Ton aus';if(state.sound)speak('Der Ton ist an.');else stopSpeech();};
-$('#greeting').onclick=()=>speak('Hallo! Ich bin Pepper. Schön, dass du da bist. Ich helfe dir beim Sicherheits-Check und zeige dir die Werkstatt.');
-function roomById(id){return ROOMS.find(r=>r.id===id)||ROOMS[0];}
-function visualSteps(steps){return '<div class="visual-steps '+(steps.length===2?'two':'')+'">'+steps.map((s,i)=>'<div class="visual-step"><span class="step-number">'+(i+1)+'</span>'+icon(s[0])+'<p>'+s[1]+'</p></div>').join('')+'</div>';}
-function setRoom(room){state.room=room;$('#workplace').value=room.id;}
-function renderRoom(room){setRoom(room);$('#roomEyebrow').textContent='ERDGESCHOSS · BEREICH '+room.number;$('#roomName').textContent=room.name;$('#roomIcon').innerHTML=icon(room.icon);$('#roomSigns').innerHTML=room.signs.map(key=>{const s=SIGNS[key];return '<button class="sign-card" data-sign="'+key+'"><span class="sign-visual '+s.color+'">'+icon(s.icon)+'</span><span><strong>'+s.title+'</strong><small>Erklärung anhören</small></span></button>';}).join('');$('#roomSigns').querySelectorAll('button').forEach(b=>b.onclick=()=>openSign(b.dataset.sign));showView('room');}
-function openSign(key){const s=SIGNS[key];showModal(s.title,'<div class="explain-hero"><span class="sign-visual '+s.color+'">'+icon(s.icon)+'</span><p>'+s.text+'</p></div>'+visualSteps(s.steps),s.title+'. '+s.text+' '+s.steps.map(x=>x[1]+'.').join(' '),'ZEICHEN VERSTEHEN');}
-$('#roomGrid').innerHTML=ROOMS.map(r=>'<button class="room-card" data-room="'+r.id+'">'+icon(r.icon)+'<span class="number">'+r.number+' / EG</span><h2>'+r.name+'</h2><p>'+r.description+'</p></button>').join('');
-$('#roomGrid').querySelectorAll('button').forEach(b=>b.onclick=()=>renderRoom(roomById(b.dataset.room)));
-$('#workplace').innerHTML=ROOMS.map(r=>'<option value="'+r.id+'">'+r.name+'</option>').join('');
-$('#workplace').onchange=()=>setRoom(roomById($('#workplace').value));
-document.querySelectorAll('[data-action]').forEach(b=>b.onclick=()=>{const action=b.dataset.action;if(action==='home')showView('home');if(action==='rooms')showView('rooms');if(action==='before')beginSession();if(action==='help')openHelp();if(action==='overview')openMap('overview');});
+$('#modalListen').onclick=()=>speak(state.modalSpeech);
+$('#sound').onclick=()=>{state.sound=!state.sound;$('#sound').setAttribute('aria-pressed',String(state.sound));$('#sound').setAttribute('aria-label',state.sound?'Ton ausschalten':'Ton einschalten');$('#sound').style.opacity=state.sound?'1':'.5';if(state.sound)speak('Ich bin wieder hörbar.');else stopSpeech();};
+function stopCamera(){state.cameraEpoch++;if(state.controller)state.controller.abort();state.controller=null;state.busy=false;if(state.stream)state.stream.getTracks().forEach(t=>t.stop());state.stream=null;}
+function resetSession(){stopCamera();state.routeEpoch++;closeModal();state.profile=null;state.current='reception';state.passed=false;state.attempts=0;state.assessment=null;state.route=null;state.mode='work';renderWelcome();}
+$('#restart').onclick=()=>{if(state.view==='welcome')return;showModal('Neue Person starten?','<p class="modal-description">Dein aktueller Check wird beendet.</p>'+actions(button('confirmReset','Ja, neu starten')),'Möchtest du deinen Check beenden und eine neue Person starten?','NEU STARTEN');$('#confirmReset').onclick=resetSession;};
+function renderWelcome(){
+  render(scene('<p class="eyebrow">DEIN PERSÖNLICHER ARBEITSBEGLEITER</p><div class="welcome-orbit"><span class="orbit-dot"></span><button id="welcome" class="welcome-button">'+face+'<strong>Willkommen</strong><small>WELCOME · ANTIPPEN</small></button></div><p class="welcome-caption"><strong>Ich bin Pepper.</strong><br>Wir starten deinen Tag. Schritt für Schritt.</p><p class="scene-note">Demo mit Beispiel-Schichtplan</p>'),'welcome');
+  $('#welcome').onclick=()=>{if(!state.config){toast('Der Dienst lädt noch. Bitte starte die App, falls er nicht erreichbar ist.');return;}document.documentElement.requestFullscreen?.().catch(()=>{});renderProfiles();};
+}
+function renderProfiles(){
+  render(scene('<div class="companion-small">'+face+'</div><h1>Wer startet heute?</h1><p class="lead">Wähle deinen Namen.</p><div class="profile-stack">'+state.config.profiles.map(p=>'<button class="profile-button" data-profile="'+p.id+'"><span class="profile-initial">'+escapeHTML(p.name[0])+'</span>'+escapeHTML(p.name)+icon('arrow')+'</button>').join('')+'</div><p class="scene-note">Beispielprofile für die Demo. Kein echter Personal-Schichtplan.</p>'),'profiles');
+  document.querySelectorAll('[data-profile]').forEach(b=>b.onclick=()=>{state.profile=state.config.profiles.find(p=>p.id===b.dataset.profile);renderReady();});
+  speak('Willkommen! Wer startet heute? Wähle bitte deinen Namen.');
+}
+function gearTokens(checks=[]){return '<div class="gear-list">'+state.profile.required.map(key=>{const check=checks.find(c=>c.key===key);return '<div class="gear-token '+(check?.state||'')+'">'+icon(key)+'<span>'+gearName(key)+(check?'<small style="display:block;font-weight:400;font-size:12px;margin-top:3px">'+(check.state==='seen'?'Erkannt':'Noch nicht sicher erkannt')+'</small>':'')+'</span></div>';}).join('')+'</div>';}
+function renderReady(){
+  render(scene('<div class="companion-small">'+face+'</div><p class="eyebrow">HALLO, '+escapeHTML(state.profile.name.toUpperCase())+'</p><h1>Bist du bereit<br>für den Sicherheits-Check?</h1><p class="lead">Zeig deinen Kopf, deinen Körper und deine Hände.</p>'+gearTokens()+actions(button('yesCheck','Ja, jetzt prüfen','solid-button','camera')+button('notReady','Noch nicht','text-button'))+'<p class="scene-note">KI-Demo · keine Arbeitsfreigabe.</p>'),'ready');
+  $('#yesCheck').onclick=inspect;$('#notReady').onclick=()=>{render(scene('<div class="companion-small">'+face+'</div><h1>Ich warte auf dich.</h1><p class="lead">Nimm dir die Zeit, die du brauchst.</p>'+actions(button('readyAgain','Jetzt bin ich bereit'))),'waiting');$('#readyAgain').onclick=renderReady;speak('Ich warte auf dich. Nimm dir die Zeit, die du brauchst.');};
+  speak('Hallo '+state.profile.name+'. Bist du bereit für den Sicherheits-Check? Ich prüfe '+state.profile.required.map(gearName).join(' und ')+'. Tippe auf Ja, wenn du bereit bist.');
+}
+async function inspect(){
+  if(state.busy||!state.profile)return;stopCamera();const token=state.cameraEpoch;state.busy=true;state.passed=false;
+  render(scene('<p class="eyebrow">ICH BIN FÜR DICH DA</p><h1 class="inspection-title">Bleib einen Moment stehen.</h1><div class="camera-frame"><div class="camera-placeholder">'+icon('camera')+'</div><video id="cameraVideo" autoplay playsinline muted></video><img id="pepperFrame" class="hidden" alt="Bild der Pepper-Kamera"><div class="scan-corners"></div><div class="scanline"></div></div><p class="lead" id="inspectionStatus">Ich schaue nach deiner Schutzkleidung.</p>'+actions(button('cancelCheck','Stopp','soft-button'))),'inspecting');
+  $('#cancelCheck').onclick=()=>{stopCamera();renderReady();};
+  speak('Bleib einen Moment stehen. Ich schaue nach deiner Schutzkleidung.');
+  try{
+    const form=new FormData();state.profile.required.forEach(key=>form.append('required',key));
+    if(state.source==='pepper'){
+      const img=$('#pepperFrame');img.src='/api/pepper/frame?t='+Date.now();img.classList.remove('hidden');form.append('source','pepper');
+    }else{
+      if(!navigator.mediaDevices?.getUserMedia)throw new Error('Camera unavailable');
+      const stream=await navigator.mediaDevices.getUserMedia({video:{width:{ideal:960},height:{ideal:720},facingMode:'user'},audio:false});
+      if(token!==state.cameraEpoch){stream.getTracks().forEach(t=>t.stop());return;}
+      state.stream=stream;const video=$('#cameraVideo');video.srcObject=stream;await video.play();
+      await new Promise(resolve=>setTimeout(resolve,1200));if(token!==state.cameraEpoch)return;
+      if(!video.videoWidth)throw new Error('No frame');
+      const canvas=document.createElement('canvas');canvas.width=video.videoWidth;canvas.height=video.videoHeight;canvas.getContext('2d').drawImage(video,0,0);
+      const blob=await new Promise(resolve=>canvas.toBlob(resolve,'image/jpeg',.85));form.append('image',blob,'inspection.jpg');
+    }
+    if(token!==state.cameraEpoch)return;const controller=new AbortController();state.controller=controller;
+    const timer=setTimeout(()=>controller.abort(),90000);let response;
+    try{response=await fetch('/api/detect',{method:'POST',body:form,signal:controller.signal});}finally{clearTimeout(timer);}
+    if(token!==state.cameraEpoch)return;if(!response.ok)throw new Error('Inspection unavailable');
+    const result=await response.json();if(token!==state.cameraEpoch)return;
+    state.attempts++;state.assessment=result.assessment;state.passed=result.assessment.passed;
+    stopCamera();if(state.passed)renderPassed();else renderFailed();
+  }catch(error){if(token!==state.cameraEpoch)return;console.warn('Inspection unavailable:', error.name, error.message);stopCamera();renderInspectionError();}
+}
+function renderFailed(){
+  const missing=state.assessment.checks.filter(c=>c.state!=='seen').map(c=>c.name);
+  let message=missing.length?missing.join(' und ')+' noch nicht sicher erkannt.':'Ich konnte die Schutzkleidung nicht eindeutig prüfen.';
+  if(!state.assessment.person_ok)message=state.assessment.person_count>1?'Bitte nur eine Person ins Bild stellen.':'Bitte zeig deinen Kopf, deinen Körper und deine Hände.';
+  render(scene('<div class="result-orb attention">'+icon('eye')+'</div><h1>Schauen wir noch einmal.</h1><p class="lead">'+escapeHTML(message)+'</p>'+gearTokens(state.assessment.checks)+'<p class="quiet-prompt">Prüfe deine Schutzkleidung. Ich warte auf dich.</p>'+actions(button('reinspect','Erneut prüfen','solid-button','camera')+(state.attempts>=2?button('failedHelp','Assistenz rufen','soft-button','help'):''))+'<p class="scene-note">Die Kamera ist aus. Erst dein nächster Tap startet einen neuen Check.</p>'),'failed');
+  $('#reinspect').onclick=inspect;if($('#failedHelp'))$('#failedHelp').onclick=()=>openHelp('ppe');
+  speak(message+' Prüfe deine Schutzkleidung. Ich warte auf dich. Tippe auf Erneut prüfen, wenn du bereit bist.'+(state.attempts>=2?' Du kannst auch eine Assistenz rufen.':''));
+}
+function renderInspectionError(){render(scene('<div class="result-orb attention">'+icon('camera')+'</div><h1>Der Check klappt gerade nicht.</h1><p class="lead">Prüfe den Kamera-Zugriff.<br>Oder lass dir helfen.</p>'+actions(button('retryError','Erneut versuchen')+button('errorHelp','Assistenz rufen','soft-button','help'))),'inspection-error');$('#retryError').onclick=inspect;$('#errorHelp').onclick=()=>openHelp('ppe');speak('Der Check klappt gerade nicht. Möchtest du es erneut versuchen oder eine Assistenz rufen?');}
+function renderPassed(){const room=roomFor(state.profile.room);render(scene('<div class="result-orb">'+icon('check')+'</div><p class="eyebrow">DEMO-CHECK BESTANDEN</p><h1>Willkommen, '+escapeHTML(state.profile.name)+'.</h1><div class="shift-summary">'+icon(room.icon)+'<div><small>DEINE HEUTIGE DEMO-SCHICHT</small><strong>'+escapeHTML(state.profile.station)+'</strong><p>'+room.name+'</p></div></div><p class="success-question">Soll ich dir den Weg zeigen?</p>'+actions(button('showWorkRoute','Ja, zeig mir den Weg','solid-button','arrow'))+'<p class="scene-note">Alle gewählten Prüfungen bestanden · keine Arbeitsfreigabe.</p>'),'passed');$('#showWorkRoute').onclick=()=>loadRoute('work');speak('Willkommen, '+state.profile.name+'. Dein Demo-Check ist bestanden. Heute ist dein Beispiel-Arbeitsplatz '+state.profile.station+', '+room.name+'. Soll ich dir den Weg zeigen?');}
 
-function beginSession(){stopCamera();state.attempts=0;state.passed=false;state.helpId=null;$('#workplace').disabled=false;document.querySelectorAll('[name=profile]').forEach(x=>x.disabled=false);$('#checkHelp').classList.add('hidden');$('#goWork').classList.add('hidden');$('#retryCheck').classList.add('hidden');$('#startCheck').classList.remove('hidden');$('#checkInstruction').textContent='Wähle deinen Arbeitsplatz. Dann legen wir los.';drawChecks();setResult('Ich helfe dir beim Prüfen.','Zeig deinen Kopf und deine Hände.');showView('check');}
-function drawChecks(checks=[]) {$('#gearChecks').innerHTML=state.required.map(key=>{const c=checks.find(x=>x.key===key);const mode=c?c.state:'pending';const label=key==='helmet'?'Helm':'Handschuhe';const text={pending:'Gleich schauen wir nach.',seen:'Im Bild erkannt',missing:'Bitte anziehen und zeigen',uncertain:'Noch nicht sicher erkannt'}[mode];return '<div class="gear-row '+mode+'">'+icon(key)+'<div><strong>'+label+'</strong><small>'+text+'</small></div><span class="gear-state">'+(mode==='seen'?'✓':mode==='pending'?'○':'?')+'</span></div>';}).join('');}
-document.querySelectorAll('[name=profile]').forEach(input=>input.onchange=()=>{state.required=input.value==='both'?['helmet','gloves']:[input.value];drawChecks();});
-function setResult(title,text,mode=''){const box=$('#checkResult');box.className='check-result '+mode;box.replaceChildren();if(mode==='pass'){const div=document.createElement('div');div.innerHTML=icon('check');box.append(div);}const h=document.createElement('h2');h.textContent=title;const p=document.createElement('p');p.textContent=text;box.append(h,p);}
-function stopCamera(){state.epoch++;clearTimeout(state.captureTimer);clearTimeout(state.frameTimer);if(state.controller)state.controller.abort();state.controller=null;state.busy=false;state.cameraActive=false;if(state.stream)state.stream.getTracks().forEach(t=>t.stop());state.stream=null;$('#video').srcObject=null;$('#robotFrame').classList.add('hidden');$('#robotFrame').removeAttribute('src');$('#overlay').getContext('2d').clearRect(0,0,$('#overlay').width,$('#overlay').height);$('#cameraEmpty').classList.remove('hidden');$('#scanStatus').classList.add('hidden');$('#stopCamera').classList.add('hidden');$('#cameraLabel').textContent='Kamera aus';$('#startCheck').disabled=false;$('#retryCheck').disabled=false;}
-async function pepperPreview(token){if(!state.cameraActive||token!==state.epoch)return;const image=$('#robotFrame');image.src='/api/pepper/frame?t='+Date.now();image.classList.remove('hidden');state.frameTimer=setTimeout(()=>pepperPreview(token),1500);}
-async function startCamera(){
- if(state.cameraActive)return true; const token=++state.epoch;
- try{
-   if(state.source==='pepper'){const r=await fetch('/api/pepper/frame');if(!r.ok)throw new Error('Pepper ist nicht erreichbar.');if(token!==state.epoch)return false;state.cameraActive=true;pepperPreview(token);}
-   else {if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia)throw new Error('Die Kamera braucht localhost oder eine sichere Verbindung.');const stream=await navigator.mediaDevices.getUserMedia({video:{width:{ideal:960},height:{ideal:720},facingMode:'user'},audio:false});if(token!==state.epoch){stream.getTracks().forEach(t=>t.stop());return false;}state.stream=stream;$('#video').srcObject=stream;await $('#video').play();if(token!==state.epoch)return false;state.cameraActive=true;}
-   $('#cameraEmpty').classList.add('hidden');$('#stopCamera').classList.remove('hidden');$('#cameraLabel').textContent=state.source==='pepper'?'Pepper-Kamera an':'Kamera an';return true;
- }catch(e){if(token!==state.epoch)return false;setResult('Die Kamera konnte nicht starten.','Bitte erlaube die Kamera oder hole Hilfe.','warn');$('#checkHelp').classList.remove('hidden');speak('Die Kamera konnte nicht starten. Bitte hole Hilfe.');return false;}
+async function loadRoute(mode){
+  if(mode==='work'&&!state.passed)return;const token=++state.routeEpoch;state.mode=mode;stopCamera();
+  render(scene('<div class="intro-icon">'+icon(mode==='exit'?'exit':'map')+'</div><h1>Ich zeige dir den Weg.</h1>'),'route-loading');
+  try{const response=await fetch('/api/route',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({current:state.current,profile:state.profile?.id,mode})});
+    if(token!==state.routeEpoch)return;if(!response.ok)throw new Error('Route unavailable');const route=await response.json();if(token!==state.routeEpoch)return;state.route=route;state.zoom=1;renderMap();
+    const next=route.path[1];
+    if(mode==='exit')speak('Bleib ruhig. Das ist ein Beispielweg, kein bestätigter Fluchtplan. Der rote Weg führt vom bestätigten Standort zum hinterlegten Hauptausgang. Folge im Notfall den grünen Schildern vor Ort. Gehe nicht in Rauch. Bitte eine Person um Hilfe, wenn du Unterstützung brauchst.');
+    else speak(next?'Der orange Weg führt zu '+state.profile.station+'. Dein bestätigter Start ist '+nodeName(state.current)+'. Der nächste Punkt ist '+nodeName(next)+'. Tippe erst auf Hier angekommen, wenn du dort bist.':'Du hast deinen zugewiesenen Arbeitsplatz bestätigt. Möchtest du deine Aufgabe sehen?');
+  }catch(error){if(token!==state.routeEpoch)return;render(scene('<div class="result-orb attention">'+icon('help')+'</div><h1>Kein Weg verfügbar.</h1><p class="lead">Bitte orientiere dich an den Schildern vor Ort.<br>Frage eine Person nach Hilfe.</p>'+actions(button('routeRetry','Weg erneut laden')+button('routeErrorHelp','Assistenz rufen','soft-button'))),'route-error');$('#routeRetry').onclick=()=>loadRoute(mode);$('#routeErrorHelp').onclick=()=>openHelp();speak('Ich kann gerade keinen Weg anzeigen. Folge den Schildern vor Ort und frage eine Person um Hilfe.');}
 }
-$('#startCheck').onclick=async()=>{if(state.busy)return;$('#startCheck').disabled=true;speak('Hallo! Ich bin Pepper. Wir prüfen jetzt deine Schutzkleidung. Zeig deinen Kopf und deine Hände.');if(await startCamera()){ $('#startCheck').classList.add('hidden');$('#retryCheck').classList.remove('hidden');$('#retryCheck').disabled=true;$('#checkInstruction').textContent='Bleib kurz stehen. Ich schaue nach.';state.captureTimer=setTimeout(runCheck,2300);}else $('#startCheck').disabled=false;};
-$('#retryCheck').onclick=async()=>{if(state.busy)return;$('#retryCheck').disabled=true;if(await startCamera())await runCheck();else $('#retryCheck').disabled=false;};
-$('#stopCamera').onclick=()=>{stopCamera();$('#startCheck').classList.toggle('hidden',state.attempts>0);$('#retryCheck').classList.toggle('hidden',state.attempts===0);};
-function drawDetections(data){const c=$('#overlay');c.width=data.width;c.height=data.height;const ctx=c.getContext('2d');ctx.clearRect(0,0,c.width,c.height);const names={Worker:'Person',Glove:'Handschuh',Hard_hat:'Helm','No-Glove':'Handschuh?', 'No-Helmet':'Helm?'};data.detections.filter(d=>names[d.label]).forEach(d=>{const[x,y,x2,y2]=d.box;ctx.strokeStyle=d.label.startsWith('No-')?'#f2a05f':'#88d8b0';ctx.lineWidth=3;ctx.strokeRect(x,y,x2-x,y2-y);ctx.fillStyle='#17261de6';ctx.font='bold 18px Arial';const width=ctx.measureText(names[d.label]).width+12;ctx.fillRect(x,Math.max(0,y-25),width,25);ctx.fillStyle='white';ctx.fillText(names[d.label],x+6,Math.max(19,y-7));});}
-async function runCheck(){
- if(state.busy||!state.cameraActive)return;state.busy=true;const epoch=state.epoch;state.controller=new AbortController();const timer=setTimeout(()=>state.controller&&state.controller.abort(),90000);$('#retryCheck').disabled=true;$('#scanStatus').classList.remove('hidden');$('#workplace').disabled=true;document.querySelectorAll('[name=profile]').forEach(x=>x.disabled=true);
- try{const form=new FormData();state.required.forEach(k=>form.append('required',k));
-   if(state.source==='pepper')form.append('source','pepper');else{const v=$('#video');if(!v.videoWidth)throw new Error('Camera not ready');const canvas=document.createElement('canvas');canvas.width=v.videoWidth;canvas.height=v.videoHeight;canvas.getContext('2d').drawImage(v,0,0);const blob=await new Promise(resolve=>canvas.toBlob(resolve,'image/jpeg',.85));form.append('image',blob,'frame.jpg');}
-   const response=await fetch('/api/detect',{method:'POST',body:form,signal:state.controller.signal});const data=await response.json();if(epoch!==state.epoch)return;if(!response.ok)throw new Error(data.error);
-   state.attempts++;state.passed=data.assessment.passed;drawChecks(data.assessment.checks);drawDetections(data);const a=data.assessment;
-   if(a.passed){setResult('Alle gewählten Prüfungen bestanden.','Gut gemacht! Ich zeige dir jetzt den Weg.','pass');$('#goWork').classList.remove('hidden');$('#checkHelp').classList.add('hidden');$('#retryCheck').classList.add('hidden');$('#checkInstruction').textContent='Der Demo-Check ist geschafft.';speak('Gut gemacht! Alle gewählten Prüfungen sind bestanden. Das ist ein Demo-Check, keine Arbeitsfreigabe. Tippe auf Zum Arbeitsplatz.');}
-   else {let text;if(!a.person_ok)text=a.person_count>1?'Bitte nur eine Person vor die Kamera stellen.':'Bitte zeig deinen Kopf, deinen Körper und deine Hände.';else text='Bitte prüfe die markierte Schutzkleidung. Zieh sie an und zeig sie noch einmal.';if(state.attempts>=2)text+=' Ich kann eine Assistenz für dich rufen.';setResult(state.attempts>=2?'Wir holen uns Unterstützung.':'Schauen wir noch einmal.',text,'warn');$('#checkHelp').classList.toggle('hidden',state.attempts<2);$('#goWork').classList.add('hidden');speak(text);}
- }catch(e){if(epoch!==state.epoch)return;state.passed=false;setResult('Der Check klappt gerade nicht.','Bitte versuche es noch einmal oder rufe die Assistenz.','warn');$('#checkHelp').classList.remove('hidden');$('#goWork').classList.add('hidden');speak('Der Check klappt gerade nicht. Bitte versuche es noch einmal oder hole Hilfe.');}
- finally{clearTimeout(timer);if(epoch===state.epoch){state.busy=false;state.controller=null;$('#scanStatus').classList.add('hidden');$('#retryCheck').disabled=false;}}
+function exitNow(){closeModal();stopCamera();stopSpeech();if(!state.config){toast('Kein Plan geladen. Folge den grünen Schildern vor Ort und hole Hilfe.');speak('Bleib ruhig. Folge den grünen Schildern vor Ort und bitte eine Person um Hilfe.');return;}loadRoute('exit');}
+$('#exitButton').onclick=exitNow;$('#modalExit').onclick=exitNow;
+function routeSVG(){
+  const nodes=state.config.nodes, route=state.route, destination=route.destination, emergency=state.mode==='exit';
+  const positions={assembly:[80,60,230,170],wood:[80,310,230,160],dining:[420,60,220,170],support:[750,60,240,170],sanitary:[750,310,240,160]};
+  const points=route.path.map(id=>nodes[id].x+','+nodes[id].y).join(' ');const current=nodes[state.current];
+  const target=nodes[destination];const color=emergency?'#b92c3b':'#ee792f';
+  return '<svg class="plant-map" viewBox="0 0 1100 570" role="group" aria-label="Beispielkarte mit '+(emergency?'rotem Ausgangsweg':'orangem Weg zum Arbeitsplatz')+'">'+
+   '<defs><pattern id="floorGrid" width="25" height="25" patternUnits="userSpaceOnUse"><path d="M25 0H0V25" fill="none" stroke="#ede7dc" stroke-width=".5"/></pattern><filter id="pinShadow"><feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity=".12"/></filter></defs>'+
+   '<rect x="20" y="20" width="1060" height="535" rx="25" fill="url(#floorGrid)"/>'+
+   '<path d="M60 40H1010V490H650V540H410V490H60Z" fill="#fffdf8" stroke="#d5cec3" stroke-width="3"/>'+
+   '<path d="M350 165V390M350 270H710M710 165V390M530 165V520" stroke="#f0e9dc" stroke-width="55" fill="none"/>'+
+   '<rect x="420" y="310" width="220" height="160" rx="15" fill="#f2ece1" stroke="#e1d6c6" stroke-width="2"/>'+
+   '<text x="447" y="343" font-size="18" fill="#7f7363">EMPFANG</text>'+
+   ROOMS.map(r=>{const[x,y,w,h]=positions[r.id];const assigned=state.profile?.room===r.id;return '<g role="button" tabindex="0" data-room="'+r.id+'" aria-label="'+r.name+'"><rect class="room-shape" x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" rx="15" fill="'+(assigned?'#ffedda':'#f0f3f4')+'" stroke="'+(assigned?'#e6af7f':'#d6dde0')+'" stroke-width="2"/><text x="'+(x+20)+'" y="'+(y+30)+'" font-size="12" letter-spacing="1.5" fill="#7a858d">'+r.number+' / EG</text><text x="'+(x+20)+'" y="'+(y+58)+'" font-size="20" font-weight="bold" fill="#47535d">'+r.short+'</text></g>';}).join('')+
+   '<text x="530" y="288" font-size="13" fill="#9d8d77" text-anchor="middle">FLUR</text>'+
+   (route.path.length>1?'<polyline points="'+points+'" fill="none" stroke="white" stroke-width="20" stroke-linejoin="round" stroke-linecap="round"/><polyline data-route-line class="route-line '+(emergency?'exit-route':'')+'" points="'+points+'"/>':'')+
+   '<rect x="505" y="491" width="50" height="16" rx="4" fill="#187753"/><text x="530" y="553" font-size="14" font-weight="bold" fill="#267657" text-anchor="middle">HAUPTAUSGANG</text>'+
+   (state.mode==='work'?'<circle cx="'+target.x+'" cy="'+target.y+'" r="20" fill="'+color+'" stroke="white" stroke-width="4"/><path d="m'+(target.x-8)+' '+target.y+' 5 5 11-12" fill="none" stroke="white" stroke-width="3"/><text x="'+target.x+'" y="'+(target.y+40)+'" text-anchor="middle" font-size="16" font-weight="bold" fill="#a95720">'+escapeHTML(state.profile.station)+'</text>':'<circle cx="'+target.x+'" cy="'+target.y+'" r="13" fill="#b92c3b" stroke="white" stroke-width="3"/>')+
+   route.signs.map(marker=>{const s=SIGNS[marker.key];const colors={blue:'#2767bb',red:'#c53647',green:'#177a55',yellow:'#f1c247'};const c=colors[s.color];const shape=s.color==='yellow'?'<path d="M0-29 30 25H-30Z" fill="'+c+'" stroke="white" stroke-width="3"/>':s.color==='green'?'<rect x="-25" y="-25" width="50" height="50" rx="8" fill="'+c+'" stroke="white" stroke-width="3"/>':'<circle r="26" fill="'+(s.color==='red'?'white':c)+'" stroke="'+(s.color==='red'?c:'white')+'" stroke-width="4"/>';return '<g role="button" tabindex="0" class="route-sign" data-sign="'+marker.key+'" aria-label="'+s.title+'" transform="translate('+marker.x+' '+marker.y+')" filter="url(#pinShadow)"><title>'+s.title+'</title>'+shape+'<svg x="-18" y="'+(s.color==='yellow'?'-9':'-18')+'" width="36" height="36" viewBox="0 0 64 64" fill="none" stroke="'+(s.color==='red'?c:s.color==='yellow'?'#332b19':'white')+'" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">'+drawings[s.icon]+'</svg></g>';}).join('')+
+   '<g aria-label="Dein bestätigter Standort"><circle cx="'+current.x+'" cy="'+current.y+'" r="25" fill="#2c3a47" fill-opacity=".1"/><circle cx="'+current.x+'" cy="'+current.y+'" r="13" fill="#263b4b" stroke="white" stroke-width="4"/><rect x="'+(current.x-42)+'" y="'+(current.y+23)+'" width="84" height="24" rx="12" fill="#263b4b"/><text x="'+current.x+'" y="'+(current.y+40)+'" text-anchor="middle" font-size="12" fill="white">DU BIST HIER</text></g></svg>';
 }
-$('#checkHelp').onclick=()=>openHelp('ppe');$('#goWork').onclick=()=>{if(!state.passed)return;stopCamera();openMap('route');};
-
-function planSvg(mode,room){
- const boxes={assembly:[65,65,191,145],wood:[65,230,191,120],dining:[300,65,110,185],support:[458,65,192,145],sanitary:[458,230,192,120]};
- const path=room.routePoints;const route=mode==='route'||mode==='escape';const color=mode==='escape'?'#147753':'#bd622b';
- return '<svg class="plan" viewBox="0 0 720 510" role="img" aria-label="Vereinfachter Beispielplan des Erdgeschosses">'+
- '<defs><marker id="routeArrow" markerWidth="8" markerHeight="8" refX="5" refY="3" orient="auto-start-reverse"><path d="M0 0L6 3L0 6z" fill="'+color+'"/></marker></defs>'+
- '<rect width="720" height="510" fill="#f7f4ee"/><text x="24" y="28" font-size="12" fill="#786e64">ERDGESCHOSS · SCHEMATISCHE DARSTELLUNG</text><path d="M50 50H665V365H458V435H300V365H50Z" fill="white" stroke="#c5bdb3" stroke-width="3"/>'+
- '<path d="M280 140V385H434V140" fill="none" stroke="#f6e9d5" stroke-width="34"/>'+
- '<rect x="301" y="270" width="109" height="164" fill="#f8ead6"/><text x="355" y="341" text-anchor="middle" font-size="13" fill="#7f6b54">Empfang</text>'+
- ROOMS.map(r=>{const b=boxes[r.id];return '<g class="map-room" data-map-room="'+r.id+'" tabindex="0" role="button" aria-label="'+r.name+'"><rect x="'+b[0]+'" y="'+b[1]+'" width="'+b[2]+'" height="'+b[3]+'" rx="8" fill="'+(r.id===room.id&&mode!=='overview'?'#f5d7bb':'#e9eef0')+'" stroke="#bcc6ca" stroke-width="2"/><text x="'+(b[0]+b[2]/2)+'" y="'+(b[1]+b[3]/2-8)+'" text-anchor="middle" font-size="24" font-weight="bold" fill="#52616a">'+r.number+'</text><text x="'+(b[0]+b[2]/2)+'" y="'+(b[1]+b[3]/2+17)+'" text-anchor="middle" font-size="12" fill="#47545c">'+r.short+'</text></g>';}).join('')+
- (route?'<polyline points="'+(mode==='escape'?path.split(' ').reverse().join(' ')+' 350,476':path)+'" fill="none" stroke="white" stroke-width="12"/><polyline points="'+(mode==='escape'?path.split(' ').reverse().join(' ')+' 350,476':path)+'" fill="none" stroke="'+color+'" stroke-width="5" stroke-linejoin="round" marker-end="url(#routeArrow)"/>':'')+
- (mode==='fire'?'<g><rect x="'+(room.firePoint[0]-17)+'" y="'+(room.firePoint[1]-17)+'" width="34" height="34" fill="#bc3440" rx="5"/><svg x="'+(room.firePoint[0]-14)+'" y="'+(room.firePoint[1]-14)+'" width="28" height="28" viewBox="0 0 64 64" fill="none" stroke="white" stroke-width="4">'+drawings.fire+'</svg></g>':'')+
- '<path d="M331 435h38" stroke="#16815b" stroke-width="7"/><text x="350" y="455" text-anchor="middle" font-size="12" fill="#286c51">Haupteingang / Ausgang</text><text x="350" y="498" text-anchor="middle" font-size="12" fill="#706a62">Außenbereich · Sammelplatz vor Ort klären</text>'+
- (mode==='route'?'<circle cx="350" cy="422" r="8" fill="#bd622b"/><text x="381" y="420" font-size="11" fill="#91532f">Start</text>':'')+'</svg>';
+function renderMap(){
+  const emergency=state.mode==='exit', arrived=state.route.path.length===1, next=state.route.path[1];
+  const title=emergency?'Ruhig zum Ausgang.':'Dein Weg, '+state.profile.name+'.';
+  const subtitle=emergency?'Ausgang im Beispielplan: '+nodeName(state.route.destination):'Heute: '+state.profile.station+' · '+roomFor(state.profile.room).short;
+  const nextPrompt=arrived?(emergency?'Du hast den Ausgang bestätigt.':'Du bist am zugewiesenen Arbeitsplatz.'):'Nächster Punkt: '+nodeName(next);
+  render('<section class="map-scene '+(emergency?'emergency-mode':'')+'"><div class="map-heading"><div><h1>'+escapeHTML(title)+'</h1><p>'+escapeHTML(subtitle)+'</p></div><button id="location" class="location-button">Standort bestätigen</button></div>'+(emergency?'<p class="emergency-strip">Demo-Fluchtweg · vor Ort bestätigen. Folge im Notfall den grünen Schildern. Nicht in Rauch gehen.</p>':'')+'<div class="map-board"><div class="map-viewport">'+routeSVG()+'</div><div class="map-tools"><button id="zoomOut" aria-label="Karte verkleinern">−</button><button id="zoomIn" aria-label="Karte vergrößern">+</button></div><span class="map-caption">BEISPIELPLAN · STANDORT MANUELL BESTÄTIGT</span><span class="map-legend"><i style="background:#c53647"></i><i style="background:#2767bb"></i><i style="background:#177a55"></i><i style="background:#f1c247"></i>Zeichen antippen</span></div><div class="journey-prompt"><div><small>'+(emergency?'BLEIB RUHIG':'ICH BEGLEITE DICH')+'</small><strong>'+escapeHTML(nextPrompt)+'</strong></div>'+button('mapNext',arrived?(emergency?'Was jetzt?':'Meine Aufgabe zeigen'):'Hier angekommen','solid-button',arrived?'help':'check')+'</div><div class="map-bottom">'+button('repeatRoute','Noch einmal hören','text-button','speaker')+button('mapHelp','Hilfe','text-button','help')+button('mapMore',emergency?'Zurück':'Mein Arbeitsplatz','text-button',emergency?'arrow':'box')+'</div></section>','map');
+  $('#mapNext').onclick=()=>{if(arrived){if(emergency)showModal('Draußen zusammenbleiben.','<div class="big-sign green">'+icon('people')+'</div><p class="modal-description">Gehe zum ausgeschilderten Sammelplatz.<br>Bleib bei deiner Gruppe.</p><p class="modal-note">Der Sammelplatz ist in diesem Beispielplan nicht festgelegt.</p>','Gehe zum ausgeschilderten Sammelplatz vor Ort. Bleib bei deiner Gruppe. Bitte eine Person um Hilfe, wenn du Unterstützung brauchst.');else showTask(roomFor(state.profile.room));}else confirmWaypoint(next);};
+  $('#repeatRoute').onclick=()=>speak(emergency?'Bleib ruhig. Folge dem roten Beispielweg. Folge im Notfall den grünen Schildern vor Ort. Gehe nicht in Rauch.':state.route.path.length>1?'Der nächste Punkt ist '+nodeName(next)+'. Folge dem orangenen Weg. Tippe auf Hier angekommen, wenn du dort bist.':'Du bist am Arbeitsplatz. Möchtest du deine Aufgabe sehen?');
+  $('#mapHelp').onclick=()=>openHelp();$('#mapMore').onclick=()=>{if(emergency){state.passed?loadRoute('work'):renderWelcome();}else openRoom(roomFor(state.profile.room));};
+  $('#location').onclick=chooseLocation;$('#zoomIn').onclick=()=>zoomMap(.35);$('#zoomOut').onclick=()=>zoomMap(-.35);
+  document.querySelectorAll('[data-sign]').forEach(el=>bindAccessible(el,()=>openSign(el.dataset.sign)));
+  document.querySelectorAll('[data-room]').forEach(el=>bindAccessible(el,()=>openRoom(roomFor(el.dataset.room))));
 }
-function bindPlan(){document.querySelectorAll('[data-map-room]').forEach(el=>{const action=()=>{closeModal();renderRoom(roomById(el.dataset.mapRoom));};el.onclick=action;el.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();action();}};});const zoomIn=$('#zoomIn'),zoomOut=$('#zoomOut');if(zoomIn)zoomIn.onclick=()=>zoomPlan(.4);if(zoomOut)zoomOut.onclick=()=>zoomPlan(-.4);}
-function zoomPlan(delta){state.zoom=Math.min(2.6,Math.max(1,state.zoom+delta));$('.plan').style.height=(380*state.zoom)+'px';$('.plan').style.width=(state.zoom*100)+'%';}
-function mapMarkup(mode,room){return '<div class="map-controls"><button id="zoomOut" aria-label="Karte verkleinern">−</button><button id="zoomIn" aria-label="Karte vergrößern">+</button></div><div class="map-wrap">'+planSvg(mode,room)+'</div>';}
-function openMap(mode){const room=state.room;let title,body,speech;
- if(mode==='overview'){title='Deine Werkstatt';speech='Das ist ein Beispielplan. Tippe auf einen Raum, um mehr zu erfahren.';body='<p class="notice">Beispielplan. Die Räume sind vereinfacht dargestellt.</p>'+mapMarkup(mode,room)+'<details class="original-plan"><summary>Originalplan ansehen</summary><img src="/static/workshop-map.png" alt="Gelieferter Beispielplan der Werkstatt"></details>';}
- else if(mode==='escape'){title='Fluchtweg lernen';speech='Das ist ein Übungsweg, kein freigegebener Fluchtplan. '+room.escape+' Folge im Notfall den grünen Schildern vor Ort. Gehe nicht in Rauch. Bitte um Hilfe, wenn du Unterstützung brauchst.';body='<p class="notice"><strong>Übungsweg – vor Ort bestätigen.</strong> Im Notfall: den Schildern und der Assistenz vor Ort folgen.</p>'+mapMarkup(mode,room)+visualSteps([['exit','Zum Ausgang gehen'],['people','Zum markierten Sammelplatz'],['help','Bei der Gruppe bleiben']])+'<p class="small-note">Nicht in Rauch gehen. Bei blockiertem Weg Hilfe holen. Der Sammelplatz ist noch nicht festgelegt.</p>';}
- else {title='Dein Weg: '+room.name;speech='Beispielweg ab dem Empfang. '+room.route+' Bitte lass dir den Weg vor Ort bestätigen.';body='<p class="notice">Beispielweg · Start am Empfang. Kein aktueller Roboter-Standort.</p>'+mapMarkup(mode,room)+visualSteps([['home','Am Empfang starten'],['path','Dem gezeigten Weg folgen'],[room.icon,room.short]])+'<button class="button orange full" id="arrived">Ich bin im Raum</button>';}
- showModal(title,body,speech,mode==='escape'?'FLUCHTWEG · LERNBEISPIEL':'ORIENTIERUNG');bindPlan();if($('#arrived'))$('#arrived').onclick=()=>{closeModal();renderRoom(room);};
-}
-$('#routeButton').onclick=()=>openMap('route');$('#escapeButton').onclick=()=>openMap('escape');
-$('#fireButton').onclick=()=>{const r=state.room;const speech=r.fire+' Das ist ein vorgeschlagener Standort. Bitte vor Ort prüfen. Halte den Zugang frei. Feuerlöscher nur nach Einweisung benutzen.';showModal('Wo ist der Feuerlöscher?','<div class="explain-hero"><span class="sign-visual red fire-sign">'+icon('fire')+'</span><p>'+r.fire+'</p></div><p class="notice">Standort-Vorschlag · noch nicht vor Ort bestätigt.</p>'+mapMarkup('fire',r)+'<p class="small-note">Zugang frei halten. Nur nach Einweisung benutzen. Im Brandfall hat die eigene Sicherheit Vorrang.</p>',speech,'FEUERLÖSCHER · STANDORT-VORSCHLAG');bindPlan();};
-$('#taskButton').onclick=()=>{const r=state.room;showModal(r.task,visualSteps(r.steps)+(r.taskNote?'<p class="notice">'+r.taskNote+'</p>':''),r.task+'. '+r.steps.map((s,i)=>'Schritt '+(i+1)+'. '+s[1]+'.').join(' ')+(r.taskNote||''),'DEINE AUFGABE · SCHRITT FÜR SCHRITT');};
+function bindAccessible(element,action){element.onclick=action;element.onkeydown=event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();action();}};}
+function zoomMap(delta){state.zoom=Math.max(1,Math.min(2.4,state.zoom+delta));$('.plant-map').style.width=(state.zoom*100)+'%';$('.plant-map').style.height=(state.zoom*100)+'%';}
+function confirmWaypoint(next){showModal('Bist du hier angekommen?','<div class="intro-icon" style="margin:10px auto 20px">'+icon('map')+'</div><p class="modal-description">'+escapeHTML(nodeName(next))+'</p>'+actions(button('confirmWaypoint','Ja, ich bin hier')+button('notThere','Noch nicht','soft-button')),'Bist du bei '+nodeName(next)+' angekommen? Bestätige bitte nur, wenn du dort bist.','STANDORT BESTÄTIGEN');$('#confirmWaypoint').onclick=()=>{state.current=next;closeModal();loadRoute(state.mode);};$('#notThere').onclick=closeModal;}
+function chooseLocation(){showModal('Wo bist du gerade?','<p class="modal-description">Bestätige deinen Standort.</p><select id="currentSelect" class="location-select" aria-label="Dein Standort">'+Object.entries(state.config.nodes).map(([id,node])=>'<option value="'+id+'" '+(id===state.current?'selected':'')+'>'+escapeHTML(node.name)+'</option>').join('')+'</select>'+button('setLocation','Ja, ich bin an diesem Ort'),'Wo bist du gerade? Wähle deinen Standort und bestätige ihn.','KEINE LIVE-ORTUNG');$('#setLocation').onclick=()=>{state.current=$('#currentSelect').value;closeModal();loadRoute(state.mode);};}
+function openSign(key){const sign=SIGNS[key];showModal(sign.title,'<div class="big-sign '+sign.color+'">'+icon(sign.icon)+'</div><p class="modal-description">'+sign.text+'</p>'+actions(button('showSignSteps','Zeig es mir in Schritten','soft-button')),sign.title+'. '+sign.text,'ZEICHEN AUF DEINEM WEG');$('#showSignSteps').onclick=()=>showSteps(sign.title,sign.steps,0,'LERNBEISPIEL');}
+function showSteps(title,steps,index=0,note=''){const step=steps[index];showModal(title,'<div class="single-step"><p class="eyebrow">SCHRITT '+(index+1)+' VON '+steps.length+'</p>'+icon(step[0])+'<h3>'+step[1]+'</h3></div><div class="step-dots">'+steps.map((s,i)=>'<span class="'+(i===index?'active':'')+'"></span>').join('')+'</div>'+(note?'<p class="modal-note">'+escapeHTML(note)+'</p>':'')+'<div class="step-buttons">'+(index>0?button('prevStep','Zurück','soft-button'):'')+button('nextStep',index===steps.length-1?'Fertig':'Nächster Schritt')+'</div>','Schritt '+(index+1)+'. '+step[1]+'. '+(index===steps.length-1?'Geschafft.':'Möchtest du den nächsten Schritt sehen?'),'SCHRITT FÜR SCHRITT');if($('#prevStep'))$('#prevStep').onclick=()=>showSteps(title,steps,index-1,note);$('#nextStep').onclick=()=>index===steps.length-1?closeModal():showSteps(title,steps,index+1,note);}
+function showTask(room){showSteps(room.task,room.steps,0,room.taskNote||'Beispiel-Aufgabe. Beachte die Einweisung vor Ort.');}
+function openRoom(room){showModal(room.name,'<p class="modal-description">Was möchtest du wissen?</p><div class="vertical-menu"><button id="roomSigns">'+icon('eye')+'Sicherheitszeichen</button><button id="roomTask">'+icon('parts')+'Meine Aufgabe</button><button id="roomFire">'+icon('fire')+'Wo ist der Feuerlöscher?</button></div>',room.name+'. Was möchtest du wissen? Sicherheitszeichen, die Aufgabe oder den Standort des Feuerlöschers?','DEIN ARBEITSBEREICH');$('#roomSigns').onclick=()=>{showModal('Welches Zeichen?','<div class="vertical-menu">'+room.signs.map(key=>{const sign=SIGNS[key];return '<button data-room-sign="'+key+'"><span class="sign-choice '+sign.color+'">'+icon(sign.icon)+'</span>'+sign.title+'</button>';}).join('')+'</div>','Welches Zeichen möchtest du erklärt bekommen?','SICHERHEITSZEICHEN');document.querySelectorAll('[data-room-sign]').forEach(b=>b.onclick=()=>openSign(b.dataset.roomSign));};$('#roomTask').onclick=()=>showTask(room);$('#roomFire').onclick=()=>showModal('Wo ist der Feuerlöscher?','<div class="big-sign fire">'+icon('fire')+'</div><p class="modal-description">'+room.fire+'</p><p class="modal-note">Vorgeschlagener Standort. Vor Ort bestätigen. Zugang frei halten.</p>',room.fire+' Das ist ein vorgeschlagener Standort. Bitte vor Ort bestätigen. Halte den Zugang frei.','STANDORT-VORSCHLAG');}
 function newId(){return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,c=>{const n=crypto.getRandomValues(new Uint8Array(1))[0]%16;return(c==='x'?n:(n&3)|8).toString(16);});}
 function openHelp(reason='general'){
- state.helpId=null;
- showModal('Wir holen Unterstützung.','<div class="help-message">'+icon('help')+'<p>Eine Assistenz kann dir helfen.<br>Bleib hier bei Pepper.</p></div><p class="small-note">Zielbereich: '+state.room.name+'. Die Nachricht geht an die lokale Assistenz-Ansicht.</p><button id="sendHelp" class="button orange full">'+icon('bell')+'Assistenz jetzt rufen</button><p id="helpStatus" role="status" class="small-note"></p>','Du brauchst Hilfe? Tippe auf Assistenz jetzt rufen. Bleib hier bei Pepper.','HILFE HOLEN');
- $('#sendHelp').onclick=async()=>{const button=$('#sendHelp');button.disabled=true;$('#helpStatus').textContent='Nachricht wird gesendet …';if(!state.helpId)state.helpId=newId();try{const r=await fetch('/api/help',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:state.helpId,room:state.room.id,reason})});if(!r.ok)throw new Error('Help unavailable');if(!document.body.contains(button))return;button.innerHTML=icon('check')+'An Assistenz-Ansicht gesendet';$('#helpStatus').textContent='Noch nicht bestätigt. Bitte warte hier. Wenn niemand reagiert, sprich eine Person direkt an.';speak('Die Nachricht wurde an die Assistenz-Ansicht gesendet. Sie ist noch nicht bestätigt. Bitte warte hier.');state.helpPoll=setInterval(pollHelp,3000);pollHelp();}catch(e){if(!document.body.contains(button))return;button.disabled=false;$('#helpStatus').textContent='Nicht gesendet. Bitte versuche es erneut oder sprich eine Person direkt an.';speak('Die Nachricht konnte nicht gesendet werden. Bitte sprich eine Person direkt an.');}};
+  const requestId=newId();showModal('Soll ich Unterstützung holen?','<div class="big-sign green">'+icon('help')+'</div><p class="modal-description">Eine Assistenz kann dir helfen.</p><p class="modal-note">Gemeldeter Standort: '+escapeHTML(nodeName(state.current))+'</p>'+actions(button('sendHelp','Ja, Assistenz rufen','solid-button','bell'))+'<p id="helpStatus" class="modal-note" role="status"></p>','Soll ich Unterstützung holen? Deine Nachricht geht an die lokale Assistenz-Ansicht.','HILFE HOLEN');
+  $('#sendHelp').onclick=async()=>{const b=$('#sendHelp');b.disabled=true;try{const response=await fetch('/api/help',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:requestId,room:state.profile?.room||'assembly',location:state.current,reason})});if(!response.ok)throw new Error();if(!$('#modal').open||!document.body.contains(b))return;b.textContent='Nachricht gesendet';$('#helpStatus').textContent='Noch nicht bestätigt. Wenn niemand reagiert, sprich bitte eine Person vor Ort an.';speak('Die Nachricht ist gesendet, aber noch nicht bestätigt. Wenn niemand reagiert, sprich bitte eine Person vor Ort an.');state.helpPoll=setInterval(async()=>{try{const r=await fetch('/api/help/'+requestId);if(!r.ok)throw new Error();const data=await r.json();if(!$('#helpStatus'))return;if(data.status==='acknowledged'||data.status==='resolved'){$('#helpStatus').textContent=data.status==='acknowledged'?'Die Assistenz hat deine Nachricht bestätigt.':'Die Anfrage wurde abgeschlossen.';speak($('#helpStatus').textContent);clearInterval(state.helpPoll);}}catch(e){if($('#helpStatus'))$('#helpStatus').textContent='Verbindung unterbrochen. Bitte sprich eine Person vor Ort an.';}},3000);}catch(e){if(!document.body.contains(b))return;b.disabled=false;$('#helpStatus').textContent='Nicht gesendet. Bitte sprich eine Person vor Ort an.';speak('Die Nachricht konnte nicht gesendet werden. Bitte sprich eine Person vor Ort an.');}};
 }
-async function pollHelp(){try{const response=await fetch('/api/help/'+state.helpId);if(!response.ok)throw new Error();const data=await response.json();if(!$('#helpStatus'))return;if(data.status==='acknowledged'){$('#helpStatus').textContent='Eine Assistenz hat deine Nachricht bestätigt. Bitte bleib bei Pepper.';clearInterval(state.helpPoll);speak('Eine Assistenz hat deine Nachricht bestätigt. Bitte bleib hier bei Pepper.');}if(data.status==='resolved'){$('#helpStatus').textContent='Die Assistenz hat die Anfrage abgeschlossen.';clearInterval(state.helpPoll);state.helpId=null;}}catch(e){if($('#helpStatus'))$('#helpStatus').textContent='Verbindung zur Assistenz unterbrochen. Bitte sprich eine Person direkt an.';}}
-$('#pepperArt').innerHTML=pepperArt;hydrate();drawChecks();
-fetch('/api/status').then(r=>r.json()).then(data=>{state.source=data.camera_source;state.speechSource=data.speech_source;}).catch(()=>toast('Der lokale Dienst ist nicht erreichbar. Bitte starte die App.'));
-window.addEventListener('pagehide',()=>{stopCamera();stopSpeech();});
+hydrate();$('#sound').innerHTML=icon('speaker');renderWelcome();
+Promise.all([fetch('/api/companion').then(r=>{if(!r.ok)throw new Error();return r.json();}),fetch('/api/status').then(r=>r.json())]).then(([config,status])=>{state.config=config;state.source=status.camera_source;state.speechSource=status.speech_source;}).catch(()=>toast('Bitte starte den Python-Dienst neu. Der Schichtplan konnte nicht geladen werden.'));
+window.addEventListener('pagehide',()=>{stopCamera();stopSpeech();clearInterval(state.helpPoll);});
 

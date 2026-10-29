@@ -12,6 +12,7 @@ import uuid
 from flask import Flask, jsonify, request, send_from_directory, Response
 from PIL import Image, UnidentifiedImageError
 from ppe_policy import evaluate, GEAR
+from navigation import NODES, EDGES, EXITS, PROFILES, route_for
 
 ROOT = Path(__file__).resolve().parent
 MODEL_PATH = ROOT / 'models' / 'best.pt'
@@ -21,6 +22,7 @@ app = Flask(__name__, static_folder='static', static_url_path='/static')
 app.config.update(MAX_CONTENT_LENGTH=5 * 1024 * 1024, HELP_DB=str(ROOT / 'help-requests.sqlite3'))
 model = None
 model_lock = Lock()
+database_lock = Lock()
 ROOMS = {'assembly', 'wood', 'dining', 'sanitary', 'support'}
 
 
@@ -67,6 +69,21 @@ def assistant():
 def status():
     return jsonify(model_loaded=model is not None, weights_available=MODEL_PATH.exists(),
                    camera_source='pepper' if BRIDGE else 'browser', speech_source='pepper' if BRIDGE else 'browser')
+
+
+@app.get('/api/companion')
+def companion():
+    return jsonify(profiles=PROFILES, nodes=NODES, edges=EDGES, exits=EXITS,
+                   initial_location='reception', demo=True)
+
+
+@app.post('/api/route')
+def route():
+    data = request.get_json(silent=True) or {}
+    try:
+        return jsonify(route_for(data.get('current'), data.get('profile'), data.get('mode')))
+    except (ValueError, TypeError):
+        return jsonify(error='Kein hinterlegter Weg für diesen Standort.'), 400
 
 
 @app.get('/api/pepper/frame')
@@ -129,8 +146,11 @@ def database():
     db = sqlite3.connect(app.config['HELP_DB'])
     db.row_factory = sqlite3.Row
     try:
-        with db:
-            db.execute('CREATE TABLE IF NOT EXISTS requests (id TEXT PRIMARY KEY, room TEXT, reason TEXT, created TEXT, status TEXT)')
+        with database_lock, db:
+            db.execute("CREATE TABLE IF NOT EXISTS requests (id TEXT PRIMARY KEY, room TEXT, reason TEXT, created TEXT, status TEXT, location TEXT DEFAULT 'reception')")
+            columns = {row['name'] for row in db.execute('PRAGMA table_info(requests)')}
+            if 'location' not in columns:
+                db.execute("ALTER TABLE requests ADD COLUMN location TEXT DEFAULT 'reception'")
             yield db
     finally:
         db.close()
@@ -140,15 +160,16 @@ def database():
 def request_help():
     data = request.get_json(silent=True) or {}
     room, reason = data.get('room'), data.get('reason', 'general')
-    if room not in ROOMS or reason not in ('ppe', 'general'):
+    location = data.get('location', 'reception')
+    if room not in ROOMS or reason not in ('ppe', 'general') or location not in NODES:
         return jsonify(error='Invalid help request'), 400
     try:
         request_id = str(uuid.UUID(data.get('id', '')))
     except (ValueError, TypeError, AttributeError):
         return jsonify(error='Invalid request ID'), 400
     with database() as db:
-        db.execute('INSERT OR IGNORE INTO requests VALUES (?, ?, ?, ?, ?)',
-                   (request_id, room, reason, datetime.now(timezone.utc).isoformat(), 'new'))
+        db.execute('INSERT OR IGNORE INTO requests (id, room, reason, created, status, location) VALUES (?, ?, ?, ?, ?, ?)',
+                   (request_id, room, reason, datetime.now(timezone.utc).isoformat(), 'new', location))
         item = dict(db.execute('SELECT * FROM requests WHERE id=?', (request_id,)).fetchone())
     return jsonify(item), 201
 
