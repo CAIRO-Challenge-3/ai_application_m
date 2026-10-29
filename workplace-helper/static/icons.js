@@ -1,0 +1,47 @@
+/* Lightweight, editable pictograms. Illustrations, not certified signage artwork. */
+const drawings = {
+ helmet:'<path d="M15 39v-7a17 17 0 0 1 34 0v7M11 40h42v7H11zM28 16v18m8-18v18"/>',
+ gloves:'<path d="M15 49 9 35c-2-5 3-7 5-3l4 6V16c0-4 5-4 5 0v14-18c0-4 5-4 5 0v18-15c0-4 5-4 5 0v15-10c0-4 5-4 5 0v24c0 8-8 11-14 11h-6z"/><path d="M43 26v20c0 5-3 8-5 9h12c5-3 7-9 7-14V23c0-4-5-4-5 0v10-16c0-4-5-4-5 0v16"/>',
+ hand:'<path d="m20 49-8-16c-2-4 3-6 5-3l6 7V16c0-4 5-4 5 0v15-20c0-4 5-4 5 0v20-17c0-4 5-4 5 0v17-12c0-4 5-4 5 0v23c0 9-7 13-15 13z"/>',
+ boot:'<path d="M19 12h20v23l12 8v9H12V39l7-8zM12 46h39M29 20h9m-9 8h9m-9 8h9"/>',
+ glasses:'<path d="m7 25 5-9m45 9-5-9M7 25h20v15H10zM37 25h20l-3 15H37zM27 30h10"/>',
+ ears:'<path d="M13 34v-5a19 19 0 0 1 38 0v5M20 28h-8v21h8zM44 28h8v21h-8z"/>',
+ box:'<path d="m10 21 22-10 22 10v27L32 58 10 48zM10 21l22 10 22-10M32 31v27M21 16l23 10"/>',
+ parts:'<rect x="8" y="13" width="17" height="17" rx="3"/><rect x="36" y="13" width="17" height="17" rx="3"/><rect x="22" y="38" width="17" height="17" rx="3"/>',
+ label:'<rect x="11" y="20" width="42" height="34" rx="3"/><path d="M23 20v10h18V20M22 40h20m-20 7h13M20 11h24"/>',
+ wood:'<path d="m8 23 39-9 9 26-39 10zM15 30l32-8M19 39l29-8"/><circle cx="40" cy="34" r="4"/>',
+ sand:'<path d="m11 39 37-7 6 13-37 7zM20 22l22-5 5 12-23 5zM12 17l-5 5m45-4 5-5"/>',
+ brush:'<path d="m15 33 9-9 26 26-9 9zM24 24l13-13 7 7-13 13M12 41l5 5m1-11 5 5m-4 8 5 5M7 56h12"/>',
+ meal:'<circle cx="35" cy="33" r="17"/><circle cx="35" cy="33" r="11"/><path d="M8 12v15h8V12m-4 0v41M58 12v41"/>',
+ tray:'<path d="M8 48h48M16 43h31M16 36h31M19 29h24M29 15h14v9H29zM43 17h6v5h-6"/>',
+ wash:'<path d="M10 22h25v9h15V18H25v-7h-8v11M44 38v2m7-2v2m-14-2v2M12 46l16 9h14l12-9c2-4-1-6-4-4l-10 5H28l-9-6z"/>',
+ towel:'<path d="M10 15h44M18 15v37h27V15M22 44h19M22 48h19"/>',
+ drop:'<path d="M32 9S15 29 15 39a17 17 0 0 0 34 0C49 29 32 9 32 9z"/>',
+ trip:'<circle cx="29" cy="14" r="5"/><path d="m29 23-7 13 12 6-2 14m-10-20-8 10-7 3m22-22 12 7 10-4M43 47h14v10H43z"/>',
+ slip:'<circle cx="38" cy="12" r="5"/><path d="m35 22-11 12 14 8 9 11m-23-19-9 16H6m24-22-15-5m14 39h24"/>',
+ hot:'<path d="M12 42h40v10H12zM20 31c-9-9 9-12 0-22m12 22c-9-9 9-12 0-22m12 22c-9-9 9-12 0-22"/>',
+ noSmoke:'<path d="M12 35h34v9H12zM39 35v9M46 17c-11 4 9 9-1 13"/><circle cx="32" cy="32" r="26"/><path d="m14 14 36 36"/>',
+ flame:'<path d="M34 7c3 17 15 16 15 31a17 17 0 0 1-34 0c0-9 7-15 11-19-1 9 2 12 4 12 6-7 4-16 4-24z"/>',
+ fire:'<path d="M20 26h20v29H20zM25 26V15h10v11M25 16l-5-6h17M35 18h9c8 0 9 9 9 18h-5V26M23 36h14m-14 5h14"/>',
+ aid:'<path d="M24 9h16v15h15v16H40v15H24V40H9V24h15z"/>',
+ exit:'<path d="M7 10h22v45H7M40 44l10-12-10-12M26 32h24"/><circle cx="20" cy="20" r="3"/><path d="m20 26-4 10 8 5 1 8m-9-13-3 11"/>',
+ path:'<path d="M16 54V16h30M38 8l8 8-8 8M24 54h24V34"/>',
+ walk:'<circle cx="34" cy="11" r="5"/><path d="m32 21-5 15 12 7 4 12M27 36l-8 18m12-30-11 7H9m22-9 10 9h11"/>',
+ people:'<circle cx="32" cy="24" r="5"/><path d="M23 46V36c0-8 18-8 18 0v10M8 8l10 10m-10-1V8h9m39 0L46 18m1-10h9v9M8 56l10-10M8 47v9h9m39 0L46 46m10 1v9h-9"/>',
+ help:'<circle cx="24" cy="19" r="8"/><path d="M10 53V41c0-17 28-17 28 0v12M42 14c0-9 16-9 16 0 0 6-8 6-8 13m0 9v1"/>',
+ talk:'<path d="M9 12h46v31H30L17 53V43H9zM19 24h26M19 32h18"/>',
+ eye:'<path d="M5 32s11-17 27-17 27 17 27 17-11 17-27 17S5 32 5 32z"/><circle cx="32" cy="32" r="8"/>',
+ check:'<path d="m12 32 13 13 27-29"/>',
+ camera:'<path d="M8 21h12l5-8h14l5 8h12v32H8z"/><circle cx="32" cy="36" r="10"/>',
+ speaker:'<path d="M9 26h10l14-12v36L19 38H9zM42 23c7 6 7 12 0 18M49 15c13 12 13 22 0 34"/>',
+ map:'<path d="m7 14 16-5 18 7 16-5v40l-16 5-18-7-16 5zM23 9v40m18-33v40"/>',
+ arrow:'<path d="M10 32h43M39 18l14 14-14 14"/>',
+ home:'<path d="m7 29 25-20 25 20M14 25v30h36V25M26 55V36h12v19"/>',
+ stop:'<path d="M20 7h24l13 13v24L44 57H20L7 44V20zM32 18v19m0 8v1"/>',
+ bell:'<path d="M14 43h36l-6-9V24c0-17-24-17-24 0v10zM27 51c2 6 8 6 10 0"/>',
+ mic:'<rect x="24" y="8" width="16" height="31" rx="8"/><path d="M16 29v4a16 16 0 0 0 32 0v-4M32 49v8M23 57h18"/>'
+};
+window.icon = function(name, className='') {
+ return '<svg class="icon '+className+'" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+(drawings[name]||drawings.help)+'</svg>';
+};
+window.pepperArt = '<svg viewBox="0 0 240 250" aria-hidden="true" class="pepper"><ellipse cx="122" cy="234" rx="61" ry="9" fill="#d9d3cd"/><path d="M89 102Q120 91 151 102L159 171Q148 185 146 213L161 230H79l16-17-15-42z" fill="white" stroke="#cfd1d2" stroke-width="3"/><path d="M83 112Q63 125 61 164" stroke="#d5d5d5" stroke-width="23" stroke-linecap="round"/><path d="M159 112Q178 103 183 79" stroke="#dedede" stroke-width="23" stroke-linecap="round"/><path d="M83 112Q63 125 61 164M159 112Q178 103 183 79" stroke="white" stroke-width="18" stroke-linecap="round"/><circle cx="61" cy="169" r="10" fill="#e27c3e"/><circle cx="184" cy="74" r="10" fill="#e27c3e"/><rect x="80" y="23" width="80" height="74" rx="31" fill="white" stroke="#d2d4d5" stroke-width="3"/><ellipse cx="80" cy="58" rx="6" ry="15" fill="#e27c3e"/><ellipse cx="160" cy="58" rx="6" ry="15" fill="#e27c3e"/><circle cx="102" cy="55" r="9" fill="#29323b"/><circle cx="138" cy="55" r="9" fill="#29323b"/><circle cx="104" cy="53" r="3" fill="white"/><circle cx="140" cy="53" r="3" fill="white"/><path d="M110 78q10 7 20 0" fill="none" stroke="#9a9fa5" stroke-width="3" stroke-linecap="round"/><rect x="93" y="117" width="54" height="42" rx="5" fill="#30373c"/><rect x="98" y="122" width="44" height="32" rx="2" fill="#f4a362"/><path d="m109 137 7 7 15-16" fill="none" stroke="white" stroke-width="4"/><path d="M104 202h32" stroke="#e27c3e" stroke-width="5" stroke-linecap="round"/></svg>';
