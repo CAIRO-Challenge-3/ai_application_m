@@ -9,12 +9,32 @@ with sync_playwright() as p:
     browser = p.chromium.launch(executable_path=r'C:\Program Files\Google\Chrome\Application\chrome.exe', headless=True,
         args=['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'])
     context = browser.new_context(viewport={'width':1280,'height':900}, permissions=['camera'])
+    context.add_init_script("window.__spoken=[]; speechSynthesis.speak=function(u){window.__spoken.push(u.text)}; speechSynthesis.cancel=function(){};")
     page = context.new_page()
     errors=[]
     page.on('pageerror', lambda e: errors.append(str(e)))
     page.goto('http://127.0.0.1:5055')
     page.screenshot(path=str(out/'home.png'), full_page=True)
-    page.locator('[data-action=rooms]').first.click()
+    # Every room has three speaking symbol explanations, a task and a proposed fire location.
+    for room_id in ['assembly', 'wood', 'dining', 'sanitary', 'support']:
+        page.locator('[data-action=rooms]:visible').first.click()
+        page.locator('[data-room='+room_id+']').click()
+        buttons=page.locator('#roomSigns button')
+        assert buttons.count()==3
+        for i in range(3):
+            before=page.evaluate('window.__spoken.length')
+            buttons.nth(i).click()
+            assert page.evaluate('window.__spoken.length')>before
+            page.locator('#repeatVoice').click()
+            assert page.evaluate('window.__spoken.length')>before+1
+            page.locator('#closeModal').click()
+        page.locator('#taskButton').click()
+        assert 2<=page.locator('.visual-step').count()<=3
+        page.locator('#closeModal').click()
+        page.locator('#fireButton').click()
+        assert 'Vorschlag' in page.locator('#modalBody').inner_text()
+        page.locator('#closeModal').click()
+    page.locator('[data-action=rooms]:visible').first.click()
     page.locator('[data-room=wood]').click()
     assert page.locator('#roomSigns button').count()==3
     page.locator('[data-sign=glasses]').click()
