@@ -4,7 +4,9 @@ An orange-and-white, tablet-friendly application with simple German, large illus
 
 ## Run on this laptop
 
-Double-click `start.bat`, then open **http://127.0.0.1:5000** in Chrome or Edge. If an older version is running, stop it with Ctrl+C and start it again; reload the browser with Ctrl+F5.
+Double-click `start.bat`. The launcher waits for the service to be ready, then opens **http://127.0.0.1:5000** in your default browser. Keep the server window open. Launching again reuses the running version instead of starting another server. Use `start.bat --no-browser` to suppress browser opening.
+
+If an older version is running after a code update, close its server window with Ctrl+C and start again; reload the browser with Ctrl+F5. The launcher detects occupied ports and stale versions and shows an error instead of silently binding another process to the same port. `python app.py` also uses this launcher. Its `/api/health` endpoint reports application identity and backend build ID.
 
 For a new machine:
 

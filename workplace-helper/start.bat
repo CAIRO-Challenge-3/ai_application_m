@@ -1,4 +1,13 @@
 @echo off
+setlocal
 cd /d "%~dp0"
-python app.py
-pause
+if exist ".venv\Scripts\python.exe" (
+    ".venv\Scripts\python.exe" launcher.py %*
+) else (
+    python launcher.py %*
+)
+if errorlevel 1 (
+    echo.
+    echo Pepper could not start. See the error above.
+    pause
+)

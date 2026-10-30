@@ -8,6 +8,7 @@ import os
 import sqlite3
 import urllib.request
 import uuid
+import hashlib
 
 from flask import Flask, jsonify, request, send_from_directory, Response
 from PIL import Image, UnidentifiedImageError
@@ -15,6 +16,8 @@ from ppe_policy import evaluate, GEAR
 from navigation import NODES, EDGES, EXITS, PROFILES, route_for
 
 ROOT = Path(__file__).resolve().parent
+BUILD_ID = hashlib.sha256(b''.join((ROOT / filename).read_bytes() for filename in
+    ('app.py', 'launcher.py', 'navigation.py', 'ppe_policy.py'))).hexdigest()[:16]
 MODEL_PATH = ROOT / 'models' / 'best.pt'
 MODEL_URL = 'https://huggingface.co/killuminati1/construction-ppe-yolov8/resolve/main/best.pt'
 BRIDGE = os.environ.get('PEPPER_BRIDGE_URL', '').rstrip('/')
@@ -69,6 +72,11 @@ def assistant():
 def status():
     return jsonify(model_loaded=model is not None, weights_available=MODEL_PATH.exists(),
                    camera_source='pepper' if BRIDGE else 'browser', speech_source='pepper' if BRIDGE else 'browser')
+
+
+@app.get('/api/health')
+def health():
+    return jsonify(app_id='pepper-workplace-helper', build_id=BUILD_ID, ready=True)
 
 
 @app.get('/api/companion')
@@ -206,4 +214,5 @@ def no_store(response):
 
 
 if __name__ == '__main__':
-    app.run(host=os.environ.get('HOST', '127.0.0.1'), port=int(os.environ.get('PORT', '5000')), threaded=True)
+    from launcher import main
+    raise SystemExit(main())
